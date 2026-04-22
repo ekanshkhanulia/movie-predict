@@ -98,8 +98,38 @@ for  epoch in range(1,args.epochs+1):
     epoch_loss=0.0
     num_batches=0
 
-    for
+    for seq,pos in train_loader:
+        #move batch to same device as model
+        seq=seq.to(device)
+        pos=pos.to(device)
 
+        #smple negative same shape
+        neg=sample_negative_items(pos_items=pos,item_num=item_num,device=device)
+
+        #forward pass :hidden state for each timespet
+        hidden=model(seq)
+
+        #socre postivie and negative
+        pos_scores=model.predict_next(hidden,pos)
+        neg_scores=model.predict_next(hidden,neg)
+
+        #ignoring padding in loss
+        mask=(pos!=0)
+
+        #bce loss over positive and negative scores
+        loss=model.compute_loss(pos_scores,neg_scores,mask)
+
+        #backpropagte and update
+        model.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(),max_norm=5.0)
+        model.optimizer.step()
+
+        epoch_loss+=loss.item()
+        num_batches+=1
+
+    avg_loss=epoch_loss/max(1,num_batches)
+    print(f"Epoch {epoch:03d} |train_loss: {avg_loss:.4f}")
 
 
 
