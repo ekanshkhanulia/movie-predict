@@ -71,18 +71,16 @@ def parse_eval_metrics(output_text):
 
 def main(args):
     grid = {  # Defines ablation values for each hyperparameter you want to vary.
-        "num_blocks": [1],  # Try different transformer block counts.
-        "hidden_units": [64],  # Try different embedding/hidden sizes.
-        "num_heads": [1],  # Try different attention head counts.
-        "maxlen": [50],  # Try different input sequence lengths.
+        "num_blocks": [1,2,3],  # Try different transformer block counts.
+        "hidden_units": [64,128,256],  # Try different embedding/hidden sizes.
+        "num_heads": [1,2,4],  # Try different attention head counts.
+        "maxlen": [50,100,200],  # Try different input sequence lengths.
     }
 
 
     os.makedirs(args.ckpt_dir, exist_ok=True)  # Ensures checkpoint folder exists.
     os.makedirs(args.result_dir, exist_ok=True)  # Ensures result folder exists.
     result_csv_path = os.path.join(args.result_dir, args.result_csv)  # Builds full path for CSV output file.
-    if os.path.exists(result_csv_path):
-        os.remove(result_csv_path)  # Always start with a fresh CSV for each new run.
 
     grid_keys = list(grid.keys())  # Gets hyperparameter names in fixed order.
     grid_values = [grid[k] for k in grid_keys]  # Gets list of value-lists in same order.
