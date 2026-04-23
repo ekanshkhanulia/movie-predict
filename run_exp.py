@@ -81,6 +81,8 @@ def main(args):
     os.makedirs(args.ckpt_dir, exist_ok=True)  # Ensures checkpoint folder exists.
     os.makedirs(args.result_dir, exist_ok=True)  # Ensures result folder exists.
     result_csv_path = os.path.join(args.result_dir, args.result_csv)  # Builds full path for CSV output file.
+    if os.path.exists(result_csv_path):
+        os.remove(result_csv_path)  # Always start with a fresh CSV for each new run.
 
     grid_keys = list(grid.keys())  # Gets hyperparameter names in fixed order.
     grid_values = [grid[k] for k in grid_keys]  # Gets list of value-lists in same order.
