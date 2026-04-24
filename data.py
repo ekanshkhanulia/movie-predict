@@ -20,6 +20,7 @@ class MovieLensDataset:
         self.val_y = []
         self.test_y = []
         self.user_histories = [] # for negative sampling during training
+        self.train_histories = []  # items seen only in training history (for eval masking)
 
         self.train_val_test_split(maxlen)
         
@@ -88,13 +89,14 @@ class MovieLensDataset:
             # Targets
             # For training, the targets are the sequences shifted one step to the right
             train_target = movies[1:-1] 
-            self.train_y.append(pad(train_target + [movies[-2]]))
+            self.train_y.append(pad(train_target ))
             # For validation and test, they are the second to last or last item in sequence, respectively
             self.val_y.append(movies[-2])  
             self.test_y.append(movies[-1])
 
             # Keeping track of all movies seen by the user, to use later for negative sampling
             self.user_histories.append(set(movies))
+            self.train_histories.append(set(movies[:-2]))  # training-only items for eval masking
         
     def get_loader(self, split, batch_size):
         """Converts a data split into a PyTorch DataLoader for batch sampling during training."""

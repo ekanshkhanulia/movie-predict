@@ -1,6 +1,7 @@
 import argparse
 import math #for ndcg
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 
 from data import MovieLensDataset
 from model import SASRec
@@ -62,7 +63,7 @@ def build_model_from_checkpoint(ckpt_path,dataset):
 
 #step
 @torch.no_grad()
-def evaluate_split(model, loader, item_num, topk=(10, 20)):
+def evaluate_split(model, loader, item_num, dataset, topk=(10, 20)):
     model.eval()
     device = model.device
 
@@ -75,13 +76,20 @@ def evaluate_split(model, loader, item_num, topk=(10, 20)):
     user_count = 0
     _ = item_num  # keeps signature explicit for compatibility/readability
 
-    for seq, target in loader:
+    for seq, target, row_idx in loader:
         seq = seq.to(device)
         target = target.to(device)
 
         hidden = model(seq)
         logits = model.predict_all_items(hidden)  # [batch_size, item_num + 1]
         logits[:, 0] = -1e9  # never rank padding id
+
+        # Full-ranking protocol: mask items already in user's training history
+        # so ranking happens among items the user hasn't seen in training.
+        for i, r in enumerate(row_idx.tolist()):
+            seen = dataset.train_histories[r]
+            if seen:
+                logits[i, list(seen)] = -1e9
 
         sorted_items = torch.argsort(logits, dim=1, descending=True)
 
@@ -111,13 +119,21 @@ def main(args):
         args.maxlen)
 
 
-    val_loader=dataset.get_loader("val",args.batch_size) #validation Data Loader
-    test_loader=dataset.get_loader("test",args.batch_size) #test Data Loader
+    # Build loaders with row indices so each row can map to its user's training history
+    # (needed for seen-item masking during full-ranking evaluation).
+    def build_eval_loader(split):
+        X = torch.tensor(dataset.splits[split][0], dtype=torch.int64)
+        y = torch.tensor(dataset.splits[split][1], dtype=torch.int64)
+        idx = torch.arange(X.size(0), dtype=torch.int64)
+        return DataLoader(TensorDataset(X, y, idx), batch_size=args.batch_size, shuffle=False)
+
+    val_loader = build_eval_loader("val")   # validation Data Loader
+    test_loader = build_eval_loader("test") # test Data Loader
 
     model,item_num=build_model_from_checkpoint(args.ckpt_path,dataset) #rebuilds model 
 
-    val_metrics=evaluate_split(model,val_loader,item_num=item_num,topk=(10,20))
-    test_metrics=evaluate_split(model,test_loader,item_num=item_num,topk=(10,20))
+    val_metrics=evaluate_split(model,val_loader,item_num=item_num,dataset=dataset,topk=(10,20))
+    test_metrics=evaluate_split(model,test_loader,item_num=item_num,dataset=dataset,topk=(10,20))
 
 
     print("Validation Metrics:")

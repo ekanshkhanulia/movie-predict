@@ -114,7 +114,7 @@ def parse_args():
 
 
 @torch.no_grad()
-def validate(model, val_loader, topk=(10, 20)):
+def validate(model, val_loader, dataset, topk=(10, 20)):
     model.eval()
     device = model.device
 
@@ -125,7 +125,7 @@ def validate(model, val_loader, topk=(10, 20)):
         ndcg_sum[k] = 0.0
     num_users = 0
 
-    for seq, target in val_loader:
+    for seq, target, row_idx in val_loader:
         seq = seq.to(device)
         target = target.to(device)
 
@@ -136,6 +136,13 @@ def validate(model, val_loader, topk=(10, 20)):
 
         # Do not rank padding id=0.
         logits[:, 0] = -1e9
+
+        # Full-ranking protocol: mask items already in user's training history
+        # so ranking happens among items the user hasn't seen in training.
+        for i, r in enumerate(row_idx.tolist()):
+            seen = dataset.train_histories[r]
+            if seen:
+                logits[i, list(seen)] = -1e9
 
         # Score of true target item for each user.
         target_scores = logits.gather(1, target.unsqueeze(1))  # [batch_size, 1]
@@ -184,7 +191,16 @@ def train(args):
         shuffle=True,
     )
 
-    val_loader = dataset.get_loader("val", args.batch_size)
+    # Build val loader with row indices so each batch row can map to its user's training history.
+    # Needed for seen-item masking during full-ranking evaluation.
+    val_X = torch.tensor(dataset.splits["val"][0], dtype=torch.int64)
+    val_y = torch.tensor(dataset.splits["val"][1], dtype=torch.int64)
+    val_idx = torch.arange(val_X.size(0), dtype=torch.int64)
+    val_loader = DataLoader(
+        TensorDataset(val_X, val_y, val_idx),
+        batch_size=args.batch_size,
+        shuffle=False,
+    )
 
     # Number of items (excluding padding id 0).
     item_num = int(dataset.movies["MovieID"].max())
@@ -255,7 +271,7 @@ def train(args):
 
         avg_loss = epoch_loss / max(1, num_batches)
 
-        val_metrics = validate(model, val_loader, topk=(10, 20))
+        val_metrics = validate(model, val_loader, dataset, topk=(10, 20))
         val_ndcg10 = val_metrics["ndcg@10"]
 
         print("Epoch", epoch)
