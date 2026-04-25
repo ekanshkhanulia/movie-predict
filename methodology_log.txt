@@ -1,0 +1,193 @@
+=============================================
+  SASRec Project — Methodology Log
+  Group 18
+  Recorded: April 25, 2026
+=============================================
+
+----------------------------------------------
+1. DATASET
+----------------------------------------------
+- MovieLens 1M dataset
+- Format: userId::movieId::rating::timestamp
+- Files: ml-1m/movies.dat, ml-1m/ratings.dat
+
+----------------------------------------------
+2. DATA PREPROCESSING (data.py — teammate)
+----------------------------------------------
+- Ratings >= 4 treated as positive interactions
+- Ratings < 4 discarded
+- Each user's interactions sorted chronologically by timestamp
+- Users with fewer than 5 interactions removed
+- Leave-one-out split per user:
+    - Training: all items except last two
+    - Validation target: second-to-last item
+    - Test target: last item
+- Sequences left-padded with 0s to length maxlen
+- user_histories stored: full set of all items each user interacted with
+  (used for negative sampling during training)
+- train_histories stored: training-only items per user
+  (used for seen-item masking during evaluation)
+
+----------------------------------------------
+3. MODEL ARCHITECTURE (model.py — teammate)
+----------------------------------------------
+- SASRec implemented in PyTorch
+- Item embedding table (padding_idx=0)
+- Learnable positional embeddings
+- Stack of self-attention blocks (num_blocks):
+    - Multi-head self-attention (nn.MultiheadAttention)
+    - Causal (upper-triangular) attention mask
+    - Key padding mask for padded tokens
+    - Point-wise feedforward network
+    - Residual connections
+    - Layer normalization (Pre-LN style)
+    - Dropout
+- predict_next(): scores specific items (used in training)
+- predict_all_items(): scores all items (used in evaluation)
+- compute_loss(): binary cross-entropy with logits + mask for padding
+
+----------------------------------------------
+4. TRAINING (train.py — our work)
+----------------------------------------------
+- Optimizer: Adam (lr=0.001 default)
+- Batch size: 128
+- Max epochs: 50
+- Early stopping patience: 5 epochs (based on val NDCG@10)
+- Dropout rate: 0.2
+- Seed: 42 (set for random, numpy, torch, cuda)
+
+Negative Sampling:
+- User-history-aware (SASRec-style)
+- For each valid target position, sample random item from [1, item_num]
+- Reject if item is in user's full interaction history
+- Reject if item equals the positive target
+- Padding positions (0) kept as 0
+
+Training Loop:
+- For each batch: (seq, pos_target, row_idx)
+- Get user histories via row_idx → dataset.user_histories
+- Sample negatives using user_histories
+- Forward pass: hidden = model(seq)
+- Score positives: model.predict_next(hidden, pos)
+- Score negatives: model.predict_next(hidden, neg)
+- Mask padding positions
+- Compute BCE loss
+- Backprop + gradient clipping (max_norm=5.0)
+- Adam step
+
+Validation (called every epoch):
+- Full ranking protocol
+- Seen-item masking: items in user's train_histories set to -1e9
+- Rank true target among remaining items
+- Compute Recall@10, Recall@20, NDCG@10, NDCG@20
+- Save checkpoint if val NDCG@10 improves
+
+Checkpoint saved contains:
+- epoch number
+- model_state_dict (learned weights)
+- best_val_ndcg10
+- args (all hyperparameters used)
+
+----------------------------------------------
+5. EVALUATION (evaluate.py — our work)
+----------------------------------------------
+- Loads checkpoint and reconstructs model using saved args
+- Full ranking protocol (as required by assignment)
+- Seen-item masking: items in user's train_histories masked with -1e9
+- Padding id=0 always masked
+- Ranks true target item among all unmasked items
+- Reports for both validation and test sets:
+    - Recall@10
+    - Recall@20
+    - NDCG@10
+    - NDCG@20
+- Metrics printed to stdout (parsed by run_exp.py)
+- Truncated to 6 decimal places (no rounding)
+
+----------------------------------------------
+6. EXPERIMENT RUNNER (run_exp.py — our work)
+----------------------------------------------
+Grid Search over 81 combinations:
+- num_blocks:   [1, 2, 3]
+- hidden_units: [64, 128, 256]
+- num_heads:    [1, 2, 4]
+- maxlen:       [50, 100, 200]
+Total: 3 x 3 x 3 x 3 = 81 runs
+
+Fixed hyperparameters across all runs:
+- lr:           0.001
+- dropout_rate: 0.2
+- batch_size:   128
+- epochs:       50
+- patience:     5
+
+For each run:
+- Calls train.py as subprocess with that config
+- Calls evaluate.py as subprocess on saved checkpoint
+- Parses val/test metrics from evaluate.py stdout
+- Saves all results to results/ablation_results.csv
+
+Resume support added:
+- If CSV already exists, reads completed run_ids
+- Skips completed runs, appends new rows from where it left off
+
+Results CSV columns:
+run_id, num_blocks, hidden_units, num_heads, maxlen,
+train_exit_code, eval_exit_code,
+val_recall@10, val_recall@20, val_ndcg@10, val_ndcg@20,
+test_recall@10, test_recall@20, test_ndcg@10, test_ndcg@20
+
+----------------------------------------------
+7. RESULTS SO FAR (41/81 runs completed)
+----------------------------------------------
+Ranking by val_ndcg@10:
+
+Rank 1 — Run 40:
+  num_blocks=2, hidden_units=128, num_heads=2, maxlen=50
+  val_ndcg@10=0.026366, val_recall@10=0.049718
+  test_ndcg@10=0.021516, test_recall@10=0.040934
+
+Rank 2 — Run 37:
+  num_blocks=2, hidden_units=128, num_heads=1, maxlen=50
+  val_ndcg@10=0.026073, val_recall@10=0.049718
+  test_ndcg@10=0.020368, test_recall@10=0.040934
+
+Rank 3 — Run 10:
+  num_blocks=1, hidden_units=128, num_heads=1, maxlen=50
+  val_ndcg@10=0.026140, val_recall@10=0.051541
+  test_ndcg@10=0.021237, test_recall@10=0.043752
+
+Note: 40 runs (num_blocks=3 combinations) still pending.
+Final best config may change after full run completes.
+
+----------------------------------------------
+8. NEXT STEPS
+----------------------------------------------
+- Resume original run (python run_exp.py --movies_file ml-1m/movies.dat --ratings_file ml-1m/ratings.dat)
+- Copy folder for separate experimentation
+- In copy: tune top 3 configs with:
+    - More epochs (100)
+    - Lower lr (5e-4 or 1e-4)
+    - More patience (10 or 15)
+    - Different dropout (0.1 or 0.5)
+- Write experiment report (due April 27, 2026)
+
+----------------------------------------------
+9. FILE STRUCTURE
+----------------------------------------------
+movie-predict/
+├── data.py           (teammate — preprocessing)
+├── model.py          (teammate — SASRec architecture)
+├── train.py          (our work — training loop)
+├── evaluate.py       (our work — evaluation)
+├── run_exp.py        (our work — grid search runner)
+├── README.md         (project documentation)
+├── methodology_log.txt (this file)
+├── ml-1m/
+│   ├── movies.dat
+│   └── ratings.dat
+├── checkpoints/      (saved model .pt files per run)
+└── results/
+    └── ablation_results.csv
+
+=============================================

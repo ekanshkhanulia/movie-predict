@@ -87,32 +87,52 @@ def main(args):
     
     all_combinations = list(itertools.product(*grid_values))  # Creates cartesian product of all hyperparameter choices.
     total_runs = len(all_combinations)  # Counts total experiment runs.
-    
-    with open(result_csv_path, "w", newline="", encoding="utf-8") as f:  # Opens CSV file in write mode.
-        writer = csv.writer(f)  # Creates CSV writer object.
 
-        writer.writerow([  # Writes CSV header row.
-            "run_id",
-            "num_blocks",
-            "hidden_units",
-            "num_heads",
-            "maxlen",
-            "train_exit_code",
-            "eval_exit_code",
-            "val_recall@10",
-            "val_recall@20",
-            "val_ndcg@10",
-            "val_ndcg@20",
-            "test_recall@10",
-            "test_recall@20",
-            "test_ndcg@10",
-            "test_ndcg@20",
-        ])
+    # Check which run_ids are already completed in the CSV (resume support).
+    completed_ids = set()
+    if os.path.exists(result_csv_path):
+        with open(result_csv_path, "r", encoding="utf-8") as existing:
+            reader = csv.DictReader(existing)
+            for row in reader:
+                try:
+                    completed_ids.add(int(row["run_id"]))
+                except (KeyError, ValueError):
+                    pass
+        print(f"Resuming: {len(completed_ids)} runs already done, skipping them.")
+        file_mode = "a"  # Append to existing CSV.
+    else:
+        file_mode = "w"  # Fresh start, write new CSV.
+
+    with open(result_csv_path, file_mode, newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+
+        if file_mode == "w":  # Only write header when starting fresh.
+            writer.writerow([
+                "run_id",
+                "num_blocks",
+                "hidden_units",
+                "num_heads",
+                "maxlen",
+                "train_exit_code",
+                "eval_exit_code",
+                "val_recall@10",
+                "val_recall@20",
+                "val_ndcg@10",
+                "val_ndcg@20",
+                "test_recall@10",
+                "test_recall@20",
+                "test_ndcg@10",
+                "test_ndcg@20",
+            ])
 
         run_id = 0  # Initializes run counter.
 
         for combo in all_combinations:  # Iterates through each hyperparameter combination.
             run_id += 1  # Increments run number.
+
+            if run_id in completed_ids:  # Skip already completed runs.
+                print(f"Run {run_id}/{total_runs} already done, skipping.")
+                continue
 
             cfg = dict(zip(grid_keys, combo))  # Converts tuple combo into named config dictionary.
             print(
